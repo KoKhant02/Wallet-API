@@ -7,55 +7,76 @@ import (
 	"net/http"
 )
 
-func GetERC20BalanceHandler(svc service.TokenService) http.HandlerFunc {
+type RequestHandler struct {
+	WalletAddress string `json:"address"`
+}
+
+func HandleERC20Balance(svc service.TokenService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		address := r.URL.Query().Get("address")
-		if address == "" {
-			http.Error(w, "Missing address", http.StatusBadRequest)
+		var req RequestHandler
+		if r.Body == nil {
+			http.Error(w, "Request body is empty", http.StatusBadRequest)
 			return
 		}
-		balance, err := svc.GetERC20Balance(address)
+
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		resp, err := svc.GetERC20Details(req.WalletAddress)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]string{
-			"balance": balance.String(),
-		})
+
+		json.NewEncoder(w).Encode(resp)
 	}
 }
 
-func GetERC721BalanceHandler(svc service.NFTService) http.HandlerFunc {
+func HandleERC721Balance(svc service.NFTService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		address := r.URL.Query().Get("address")
-		if address == "" {
-			http.Error(w, "Missing address", http.StatusBadRequest)
+		var req RequestHandler
+		if r.Body == nil {
+			http.Error(w, "Request body is empty", http.StatusBadRequest)
 			return
 		}
-		balance, err := svc.GetERC721Balance(address)
+
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		resp, err := svc.GetERC721Details(req.WalletAddress)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]string{"balance": balance.String()})
+
+		json.NewEncoder(w).Encode(resp)
 	}
 }
 
-func GetERC1155BalanceHandler(svc service.NFTService) http.HandlerFunc {
+func HandleERC1155Balance(svc service.NFTService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		address := r.URL.Query().Get("address")
-		tokenIdStr := r.URL.Query().Get("tokenId")
-		tokenId, ok := new(big.Int).SetString(tokenIdStr, 10)
-		if !ok {
-			http.Error(w, "Invalid tokenId", http.StatusBadRequest)
+		var req RequestHandler
+		if r.Body == nil {
+			http.Error(w, "Request body is empty", http.StatusBadRequest)
 			return
 		}
-		balance, err := svc.GetERC1155Balance(address, tokenId)
+
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		resp, err := svc.GetERC1155Details(req.WalletAddress)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]string{"balance": balance.String()})
+
+		json.NewEncoder(w).Encode(resp)
 	}
 }
 
