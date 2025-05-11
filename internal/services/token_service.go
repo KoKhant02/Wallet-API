@@ -1,10 +1,10 @@
-package service
+package services
 
 import (
-	"Wallet-API/contracts"
 	"fmt"
 	"log"
 	"math/big"
+	erc20 "tokenhub-api/contracts/ERC20"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -13,19 +13,21 @@ import (
 )
 
 type TokenService interface {
-	GetERC20Details(address string) (*ERC20BalanceResponse, error)
-	MintERC20(to string, amount *big.Int) error
+	GetERC20Details(walletAddr string, contractAddr string) (*ERC20BalanceResponse, error)
+	DeployERC20(name, symbol string, initialSupply *big.Int) (common.Address, error)
+	MintERC20(contractAddr common.Address, to string, amount *big.Int) (string, error)
+	BurnERC20(contractAddr common.Address, amount *big.Int) (string, error)
 }
 
 type tokenService struct {
 	client       *ethclient.Client
-	erc20        *contracts.ERC20
+	erc20        *erc20.Contracts
 	erc20Address common.Address
 	auth         *bind.TransactOpts
 }
 
-func NewTokenService(client *ethclient.Client, erc20 *contracts.ERC20, erc20Address common.Address, auth *bind.TransactOpts) TokenService {
-	return &tokenService{client: client, erc20: erc20, erc20Address: erc20Address, auth: auth}
+func NewTokenService(client *ethclient.Client, auth *bind.TransactOpts) TokenService {
+	return &tokenService{client: client, auth: auth}
 }
 
 type ERC20BalanceResponse struct {
@@ -35,209 +37,101 @@ type ERC20BalanceResponse struct {
 	Balance     string `json:"balance"`
 }
 
-func (s *tokenService) GetERC20Details(address string) (*ERC20BalanceResponse, error) {
-	addr := common.HexToAddress(address)
-	fmt.Println("Wallet Address in service:", address)
+func (s *tokenService) GetERC20Details(walletAddr string, contractAddr string) (*ERC20BalanceResponse, error) {
+	wallet := common.HexToAddress(walletAddr)
+	contract := common.HexToAddress(contractAddr)
 
-	name, err := s.erc20.Name(&bind.CallOpts{})
-	if err != nil {
-		return nil, err
-	}
-	symbol, err := s.erc20.Symbol(&bind.CallOpts{})
-	if err != nil {
-		return nil, err
-	}
+	fmt.Println("Wallet Address:", walletAddr)
+	fmt.Println("Contract Address:", contractAddr)
 
-	decimals, err := s.erc20.Decimals(&bind.CallOpts{})
+	erc20, err := erc20.NewContracts(contract, s.client)
 	if err != nil {
 		return nil, err
 	}
 
-	balance, err := s.erc20.BalanceOf(&bind.CallOpts{}, addr)
+	name, err := erc20.Name(&bind.CallOpts{})
+	if err != nil {
+		return nil, err
+	}
+	symbol, err := erc20.Symbol(&bind.CallOpts{})
+	if err != nil {
+		return nil, err
+	}
+	decimals, err := erc20.Decimals(&bind.CallOpts{})
 	if err != nil {
 		return nil, err
 	}
 
-	convertedBalance := new(big.Float).Quo(new(big.Float).SetInt(balance), new(big.Float).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)))
+	balance, err := erc20.BalanceOf(&bind.CallOpts{}, wallet)
+	if err != nil {
+		return nil, err
+	}
+
+	convertedBalance := new(big.Float).Quo(
+		new(big.Float).SetInt(balance),
+		new(big.Float).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)),
+	)
 
 	fmt.Println("Token Name:", name, "Token Symbol:", symbol, "Balance:", convertedBalance.String())
 
 	return &ERC20BalanceResponse{
 		TokenName:   name,
 		TokenSymbol: symbol,
-		Address:     s.erc20Address.Hex(),
+		Address:     contract.Hex(),
 		Balance:     convertedBalance.String(),
 	}, nil
 }
 
-func (s *tokenService) MintERC20(to string, amount *big.Int) error {
+func (s *tokenService) DeployERC20(name, symbol string, initialSupply *big.Int) (common.Address, error) {
+	scaledSupply := new(big.Int).Mul(initialSupply, new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil))
+
+	address, tx, instance, err := erc20.DeployContracts(s.auth, s.client, name, symbol, scaledSupply)
+	if err != nil {
+		return common.Address{}, err
+	}
+	log.Printf("ERC20 deployed at: %s (tx: %s)", address.Hex(), tx.Hash().Hex())
+
+	s.erc20 = instance
+	s.erc20Address = address
+	return address, nil
+}
+
+func (s *tokenService) MintERC20(contractAddr common.Address, to string, amount *big.Int) (string, error) {
+	instance, err := erc20.NewContracts(contractAddr, s.client)
+	if err != nil {
+		return "", err
+	}
+
+	decimals, err := instance.Decimals(&bind.CallOpts{})
+	if err != nil {
+		return "", err
+	}
+
+	multiplier := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
+	scaledAmount := new(big.Int).Mul(amount, multiplier)
+
 	toAddr := common.HexToAddress(to)
-	tx, err := s.erc20.Mint(s.auth, toAddr, amount)
+	tx, err := instance.Mint(s.auth, toAddr, scaledAmount)
 	if err != nil {
-		return err
+		return "", err
 	}
-	log.Println("Mint tx sent:", tx.Hash().Hex())
-	return nil
+
+	log.Println("Minted ERC20 token:", tx.Hash().Hex())
+	return tx.Hash().Hex(), nil
 }
 
-type NFTService interface {
-	GetERC721Details(walletAddress string) ([]*NFTBalanceResponse, error)
-	MintERC721(tokenURI string) error
-	GetERC1155Details(walletAddress string) ([]*NFTBalanceResponse, error)
-	MintERC1155(to string, amount *big.Int, tokenURI string) error
-}
-
-type nftService struct {
-	client         *ethclient.Client
-	erc721         *contracts.ERC721
-	erc721Address  common.Address
-	erc1155        *contracts.ERC1155
-	erc1155Address common.Address
-	auth           *bind.TransactOpts
-}
-
-func NewNFTService(client *ethclient.Client, erc721 *contracts.ERC721, erc721Address common.Address, erc1155 *contracts.ERC1155, erc1155Address common.Address, auth *bind.TransactOpts) NFTService {
-	return &nftService{
-		client:         client,
-		erc721:         erc721,
-		erc721Address:  erc721Address,
-		erc1155:        erc1155,
-		erc1155Address: erc1155Address,
-		auth:           auth,
-	}
-}
-
-type NFTBalanceResponse struct {
-	TokenName   string    `json:"tokenName"`
-	TokenSymbol string    `json:"tokenSymbol"`
-	NFTItems    []NFTItem `json:"nftItems"`
-	Address     string    `json:"address"`
-	TotalTokens string    `json:"totalTokens"`
-}
-
-type NFTItem struct {
-	TokenURI string `json:"tokenURI"`
-	TokenID  string `json:"tokenId"`
-}
-
-func (s *nftService) GetERC721Details(walletAddress string) ([]*NFTBalanceResponse, error) {
-	addr := common.HexToAddress(walletAddress)
-
-	name, err := s.erc721.Name(&bind.CallOpts{})
+func (s *tokenService) BurnERC20(contractAddr common.Address, amount *big.Int) (string, error) {
+	instance, err := erc20.NewContracts(contractAddr, s.client)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
-	symbol, err := s.erc721.Symbol(&bind.CallOpts{})
+	scaledAmount := new(big.Int).Mul(amount, new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil))
+
+	tx, err := instance.Burn(s.auth, scaledAmount)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-
-	currentTokenId, err := s.erc721.GetCurrentTokenId(&bind.CallOpts{})
-	if err != nil {
-		return nil, err
-	}
-
-	var nftItems []NFTItem
-
-	for i := int64(1); i <= currentTokenId.Int64(); i++ {
-		tokenId := big.NewInt(i)
-
-		owner, err := s.erc721.OwnerOf(&bind.CallOpts{}, tokenId)
-		if err != nil {
-			fmt.Println("Error getting token owner:", err)
-			continue
-		}
-
-		if owner != addr {
-			continue
-		}
-
-		tokenURI, err := s.erc721.TokenURI(&bind.CallOpts{}, tokenId)
-		if err != nil {
-			fmt.Println("Error getting Token URI:", err)
-			continue
-		}
-
-		nftItems = append(nftItems, NFTItem{
-			TokenURI: tokenURI,
-			TokenID:  tokenId.String(),
-		})
-	}
-
-	balance := big.NewInt(int64(len(nftItems)))
-
-	result := &NFTBalanceResponse{
-		TokenName:   name,
-		TokenSymbol: symbol,
-		Address:     s.erc721Address.Hex(),
-		TotalTokens: balance.String(),
-		NFTItems:    nftItems,
-	}
-
-	return []*NFTBalanceResponse{result}, nil
-}
-
-func (s *nftService) MintERC721(tokenURI string) error {
-	tx, err := s.erc721.MintNFT(s.auth, tokenURI)
-	if err != nil {
-		return err
-	}
-	log.Println("Minted ERC721 NFT with tx:", tx.Hash().Hex())
-	return nil
-}
-func (s *nftService) GetERC1155Details(walletAddress string) ([]*NFTBalanceResponse, error) {
-	addr := common.HexToAddress(walletAddress)
-	var results []*NFTBalanceResponse
-
-	name, err := s.erc1155.Name(&bind.CallOpts{})
-	if err != nil {
-		log.Println("Error fetching name:", err)
-	}
-	symbol, err := s.erc1155.Symbol(&bind.CallOpts{})
-	if err != nil {
-		log.Println("Error fetching symbol:", err)
-	}
-
-	for tokenId := 0; tokenId < 100; tokenId++ {
-		id := big.NewInt(int64(tokenId))
-		balance, err := s.erc1155.BalanceOf(&bind.CallOpts{}, addr, id)
-		if err != nil {
-			log.Println("Error fetching balance:", err)
-			continue
-		}
-
-		if balance.Cmp(big.NewInt(0)) > 0 {
-			tokenURI, err := s.erc1155.Uri(&bind.CallOpts{}, id)
-			if err != nil {
-				log.Println("Error fetching token URI:", err)
-				continue
-			}
-
-			results = append(results, &NFTBalanceResponse{
-				TokenName:   name,
-				TokenSymbol: symbol,
-				Address:     s.erc1155Address.Hex(),
-				TotalTokens: balance.String(),
-				NFTItems: []NFTItem{
-					{
-						TokenID:  id.String(),
-						TokenURI: tokenURI,
-					},
-				},
-			})
-		}
-	}
-
-	return results, nil
-}
-
-func (s *nftService) MintERC1155(to string, amount *big.Int, tokenURI string) error {
-	toAddr := common.HexToAddress(to)
-	tx, err := s.erc1155.Mint(s.auth, toAddr, amount, tokenURI)
-	if err != nil {
-		return err
-	}
-	log.Println("Minted ERC1155 with tx:", tx.Hash().Hex())
-	return nil
+	log.Println("Burned ERC20:", tx.Hash().Hex())
+	return tx.Hash().Hex(), nil
 }
