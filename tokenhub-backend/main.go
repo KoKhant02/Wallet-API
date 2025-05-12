@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/joho/godotenv"
+	"github.com/rs/cors"
 	"go.uber.org/zap"
 
 	"tokenhub-api/internal/router"
@@ -42,7 +43,8 @@ func main() {
 	)
 
 	r := router.NewRouter(tokenService, nftService, logger)
+	handler := cors.Default().Handler(r)
 
 	logger.Info("Server running", zap.String("address", ":8080"))
-	http.ListenAndServe(":8080", r)
+	http.ListenAndServe(":8080", handler)
 }

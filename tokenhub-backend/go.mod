@@ -8,6 +8,7 @@ require (
 	github.com/ethereum/go-ethereum v1.15.8
 	github.com/gorilla/mux v1.8.1
 	github.com/joho/godotenv v1.5.1
+	github.com/rs/cors v1.7.0
 	go.uber.org/zap v1.27.0
 )
 
