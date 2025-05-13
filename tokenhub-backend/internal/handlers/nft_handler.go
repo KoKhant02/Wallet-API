@@ -74,12 +74,15 @@ func DeployERC721Handler(svc services.NFTService) http.HandlerFunc {
 			http.Error(w, "Invalid request", http.StatusBadRequest)
 			return
 		}
-		addr, err := svc.DeployERC721(req.TokenName, req.TokenSymbol)
+
+		resp, err := svc.DeployERC721(req.TokenName, req.TokenSymbol)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]string{"contractAddress": addr.Hex()})
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
 	}
 }
 
@@ -100,12 +103,15 @@ func DeployERC1155Handler(svc services.NFTService) http.HandlerFunc {
 			http.Error(w, "Invalid request", http.StatusBadRequest)
 			return
 		}
-		addr, err := svc.DeployERC1155(req.TokenName, req.TokenSymbol)
+
+		resp, err := svc.DeployERC1155(req.TokenName, req.TokenSymbol)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]string{"contractAddress": addr.Hex()})
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
 	}
 }
 

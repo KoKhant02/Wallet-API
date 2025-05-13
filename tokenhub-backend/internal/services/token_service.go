@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"math/big"
@@ -14,7 +15,7 @@ import (
 
 type TokenService interface {
 	GetERC20Details(walletAddr string, contractAddr string) (*ERC20BalanceResponse, error)
-	DeployERC20(name, symbol string, initialSupply *big.Int) (common.Address, error)
+	DeployERC20(name, symbol string, initialSupply *big.Int) (*ERC20DeployResponse, error)
 	MintERC20(contractAddr common.Address, to string, amount *big.Int) (string, error)
 	BurnERC20(contractAddr common.Address, amount *big.Int) (string, error)
 }
@@ -82,18 +83,62 @@ func (s *tokenService) GetERC20Details(walletAddr string, contractAddr string) (
 	}, nil
 }
 
-func (s *tokenService) DeployERC20(name, symbol string, initialSupply *big.Int) (common.Address, error) {
-	scaledSupply := new(big.Int).Mul(initialSupply, new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil))
+type ERC20DeployResponse struct {
+	TokenName   string `json:"tokenName"`
+	TokenSymbol string `json:"tokenSymbol"`
+	Address     string `json:"address"`
+	TotalSupply string `json:"totalSupply"`
+}
+
+func (s *tokenService) DeployERC20(name, symbol string, initialSupply *big.Int) (*ERC20DeployResponse, error) {
+	decimals := 18
+	scaleFactor := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
+	scaledSupply := new(big.Int).Mul(initialSupply, scaleFactor)
 
 	address, tx, instance, err := erc20.DeployContracts(s.auth, s.client, name, symbol, scaledSupply)
 	if err != nil {
-		return common.Address{}, err
+		return nil, err
 	}
+
 	log.Printf("ERC20 deployed at: %s (tx: %s)", address.Hex(), tx.Hash().Hex())
+
+	_, err = bind.WaitDeployed(context.Background(), s.client, tx)
+	if err != nil {
+		return nil, fmt.Errorf("deployment tx failed: %v", err)
+	}
+
+	// Fetch on-chain data
+	tokenName, err := instance.Name(&bind.CallOpts{})
+	if err != nil {
+		return nil, fmt.Errorf("error fetching name: %v", err)
+	}
+
+	tokenSymbol, err := instance.Symbol(&bind.CallOpts{})
+	if err != nil {
+		return nil, fmt.Errorf("error fetching symbol: %v", err)
+	}
+
+	totalSupply, err := instance.TotalSupply(&bind.CallOpts{})
+	if err != nil {
+		return nil, fmt.Errorf("error fetching total supply: %v", err)
+	}
+
+	humanReadableSupply := new(big.Float).Quo(
+		new(big.Float).SetInt(totalSupply),
+		new(big.Float).SetInt(scaleFactor),
+	)
+
+	humanReadableSupplyStr := humanReadableSupply.Text('f', 0)
 
 	s.erc20 = instance
 	s.erc20Address = address
-	return address, nil
+
+	return &ERC20DeployResponse{
+		TokenName:   tokenName,
+		TokenSymbol: tokenSymbol,
+		Address:     address.Hex(),
+		TotalSupply: humanReadableSupplyStr,
+	}, nil
 }
 
 func (s *tokenService) MintERC20(contractAddr common.Address, to string, amount *big.Int) (string, error) {

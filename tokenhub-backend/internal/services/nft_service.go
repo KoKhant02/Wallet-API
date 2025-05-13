@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"math/big"
@@ -14,12 +15,12 @@ import (
 
 type NFTService interface {
 	GetERC721Details(walletAddr string, contractAddr string) (*NFTBalanceResponse, error)
-	DeployERC721(name, symbol string) (common.Address, error)
+	DeployERC721(name, symbol string) (*DeployNFTResponse, error)
 	MintERC721(contractAddr common.Address, tokenURI string) (string, error)
 	BurnERC721(contractAddr common.Address, tokenId *big.Int) (string, error)
 
 	GetERC1155Details(walletAddr string, contractAddr string) (*NFTBalanceResponse, error)
-	DeployERC1155(name, symbol string) (common.Address, error)
+	DeployERC1155(name, symbol string) (*DeployNFTResponse, error)
 	MintERC1155(contractAddr common.Address, to string, amount *big.Int, tokenURI string) (string, error)
 	BurnERC1155(contractAddr common.Address, tokenId *big.Int, amount *big.Int) (string, error)
 }
@@ -118,16 +119,42 @@ func (s *nftService) GetERC721Details(walletAddr string, contractAddr string) (*
 	return result, nil
 }
 
-func (s *nftService) DeployERC721(name, symbol string) (common.Address, error) {
+type DeployNFTResponse struct {
+	TokenName   string `json:"tokenName"`
+	TokenSymbol string `json:"tokenSymbol"`
+	Address     string `json:"address"`
+}
+
+func (s *nftService) DeployERC721(name, symbol string) (*DeployNFTResponse, error) {
 	address, tx, instance, err := erc721.DeployContracts(s.auth, s.client, name, symbol)
 	if err != nil {
-		return common.Address{}, err
+		return nil, err
 	}
 	log.Printf("ERC721 deployed at: %s (tx: %s)", address.Hex(), tx.Hash().Hex())
 
+	_, err = bind.WaitDeployed(context.Background(), s.client, tx)
+	if err != nil {
+		return nil, fmt.Errorf("deployment tx failed: %v", err)
+	}
+
+	tokenName, err := instance.Name(&bind.CallOpts{})
+	if err != nil {
+		return nil, fmt.Errorf("error fetching name: %v", err)
+	}
+
+	tokenSymbol, err := instance.Symbol(&bind.CallOpts{})
+	if err != nil {
+		return nil, fmt.Errorf("error fetching symbol: %v", err)
+	}
+
 	s.erc721 = instance
 	s.erc721Address = address
-	return address, nil
+
+	return &DeployNFTResponse{
+		TokenName:   tokenName,
+		TokenSymbol: tokenSymbol,
+		Address:     address.Hex(),
+	}, nil
 }
 
 func (s *nftService) MintERC721(contractAddr common.Address, tokenURI string) (string, error) {
@@ -227,16 +254,36 @@ func (s *nftService) GetERC1155Details(walletAddr string, contractAddr string) (
 	return result, nil
 }
 
-func (s *nftService) DeployERC1155(name, symbol string) (common.Address, error) {
+func (s *nftService) DeployERC1155(name, symbol string) (*DeployNFTResponse, error) {
 	address, tx, instance, err := erc1155.DeployContracts(s.auth, s.client, name, symbol)
 	if err != nil {
-		return common.Address{}, err
+		return nil, err
 	}
 	log.Printf("ERC1155 deployed at: %s (tx: %s)", address.Hex(), tx.Hash().Hex())
 
+	_, err = bind.WaitDeployed(context.Background(), s.client, tx)
+	if err != nil {
+		return nil, fmt.Errorf("deployment tx failed: %v", err)
+	}
+
+	tokenName, err := instance.Name(&bind.CallOpts{})
+	if err != nil {
+		return nil, fmt.Errorf("error fetching name: %v", err)
+	}
+
+	tokenSymbol, err := instance.Symbol(&bind.CallOpts{})
+	if err != nil {
+		return nil, fmt.Errorf("error fetching symbol: %v", err)
+	}
+
 	s.erc1155 = instance
 	s.erc1155Address = address
-	return address, nil
+
+	return &DeployNFTResponse{
+		TokenName:   tokenName,
+		TokenSymbol: tokenSymbol,
+		Address:     address.Hex(),
+	}, nil
 }
 
 func (s *nftService) MintERC1155(contractAddr common.Address, to string, amount *big.Int, tokenURI string) (string, error) {

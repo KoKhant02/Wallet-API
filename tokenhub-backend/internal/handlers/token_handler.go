@@ -59,12 +59,14 @@ func DeployERC20Handler(svc services.TokenService) http.HandlerFunc {
 			return
 		}
 
-		addr, err := svc.DeployERC20(req.TokenName, req.TokenSymbol, rawAmount)
+		resp, err := svc.DeployERC20(req.TokenName, req.TokenSymbol, rawAmount)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]string{"contractAddress": addr.Hex()})
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
 	}
 }
 
